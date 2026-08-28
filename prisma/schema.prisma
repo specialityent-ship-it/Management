@@ -1,0 +1,535 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Staff & access control
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  DOCTOR
+  RECEPTION
+  OT_COORDINATOR
+  MARKETING
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(RECEPTION)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  doctor          Doctor?
+  leadsOwned      Lead[]           @relation("LeadOwner")
+  activities      LeadActivity[]
+  authoredPosts   SocialPost[]
+  auditLogs       AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Clinical directory
+// ---------------------------------------------------------------------------
+
+model Doctor {
+  id             String   @id @default(cuid())
+  userId         String?  @unique
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  slug           String   @unique
+  name           String
+  qualifications String
+  specialty      String
+  bio            String   @db.Text
+  photoUrl       String?
+  regNumber      String?
+  yearsExp       Int      @default(0)
+  consultFee     Int      @default(0) // paise
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  availability Availability[]
+  services     Service[]      @relation("DoctorServices")
+  appointments Appointment[]
+  otCases      OtCase[]       @relation("PrimarySurgeon")
+}
+
+enum ServiceKind {
+  OPD
+  OT
+  DIAGNOSTIC
+  TELECONSULT
+}
+
+model Service {
+  id             String      @id @default(cuid())
+  slug           String      @unique
+  name           String
+  kind           ServiceKind @default(OPD)
+  description    String      @db.Text
+  durationMin    Int         @default(15)
+  priceMinor     Int         @default(0) // paise
+  depositMinor   Int         @default(0) // paise required to confirm a booking
+  requiresDeposit Boolean    @default(false)
+  /// Controls the order services appear in on the website and booking page,
+  /// so the primary consultation leads rather than whatever sorts first.
+  displayOrder   Int         @default(100)
+  active         Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  doctors      Doctor[]      @relation("DoctorServices")
+  appointments Appointment[]
+  otCases      OtCase[]
+}
+
+/// Recurring weekly availability window for a doctor. dayOfWeek: 0 = Sunday.
+model Availability {
+  id          String  @id @default(cuid())
+  doctorId    String
+  doctor      Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
+  startMinute Int // minutes from midnight, clinic-local time
+  endMinute   Int
+  slotMin     Int     @default(15)
+  active      Boolean @default(true)
+
+  @@index([doctorId, dayOfWeek])
+}
+
+/// One-off block (leave, conference, theatre day) that removes availability.
+model TimeOff {
+  id       String   @id @default(cuid())
+  doctorId String
+  start    DateTime
+  end      DateTime
+  reason   String?
+
+  @@index([doctorId, start])
+}
+
+// ---------------------------------------------------------------------------
+// Patients
+// ---------------------------------------------------------------------------
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNDISCLOSED
+}
+
+model Patient {
+  id          String    @id @default(cuid())
+  mrn         String    @unique // medical record number
+  name        String
+  phone       String
+  email       String?
+  gender      Gender    @default(UNDISCLOSED)
+  dob         DateTime?
+  address     String?
+  city        String?
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  appointments Appointment[]
+  otCases      OtCase[]
+  payments     Payment[]
+  leads        Lead[]
+
+  @@index([phone])
+  @@index([name])
+}
+
+// ---------------------------------------------------------------------------
+// Appointments (OPD) — booking request workflow
+// ---------------------------------------------------------------------------
+
+enum AppointmentStatus {
+  REQUESTED // patient submitted from website, awaiting confirmation
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingSource {
+  WEBSITE
+  PHONE
+  WALK_IN
+  CHATBOT
+  REFERRAL
+}
+
+model Appointment {
+  id        String            @id @default(cuid())
+  reference String            @unique // human-friendly code shown to the patient
+  patientId String
+  patient   Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId  String
+  doctor    Doctor            @relation(fields: [doctorId], references: [id])
+  serviceId String
+  service   Service           @relation(fields: [serviceId], references: [id])
+  start     DateTime
+  end       DateTime
+  status    AppointmentStatus @default(REQUESTED)
+  source    BookingSource     @default(WEBSITE)
+  reason    String?           @db.Text
+  staffNote String?           @db.Text
+  cancelledReason String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  payments Payment[]
+  otCase   OtCase?
+
+  @@index([start])
+  @@index([doctorId, start])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Operation Theatre
+// ---------------------------------------------------------------------------
+
+enum OtStatus {
+  PLANNED
+  PRE_OP
+  SCHEDULED
+  IN_THEATRE
+  RECOVERY
+  COMPLETED
+  POSTPONED
+  CANCELLED
+}
+
+enum AnaesthesiaType {
+  LOCAL
+  REGIONAL
+  GENERAL
+  SEDATION
+}
+
+model Theatre {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+
+  cases OtCase[]
+}
+
+model OtCase {
+  id             String          @id @default(cuid())
+  reference      String          @unique
+  patientId      String
+  patient        Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  surgeonId      String
+  surgeon        Doctor          @relation("PrimarySurgeon", fields: [surgeonId], references: [id])
+  serviceId      String
+  service        Service         @relation(fields: [serviceId], references: [id])
+  theatreId      String?
+  theatre        Theatre?        @relation(fields: [theatreId], references: [id])
+  appointmentId  String?         @unique
+  appointment    Appointment?    @relation(fields: [appointmentId], references: [id])
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  status         OtStatus        @default(PLANNED)
+  anaesthesia    AnaesthesiaType @default(LOCAL)
+  anaesthetist   String?
+  assistants     String?
+  procedureNote  String?         @db.Text
+  consentSigned  Boolean         @default(false)
+  fitnessCleared Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  checklist OtChecklistItem[]
+  payments  Payment[]
+
+  @@index([scheduledStart])
+  @@index([status])
+}
+
+model OtChecklistItem {
+  id       String   @id @default(cuid())
+  caseId   String
+  otCase   OtCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  label    String
+  phase    String   @default("PRE_OP") // PRE_OP | SIGN_IN | TIME_OUT | SIGN_OUT
+  done     Boolean  @default(false)
+  doneAt   DateTime?
+  doneBy   String?
+
+  @@index([caseId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments (Razorpay)
+// ---------------------------------------------------------------------------
+
+enum PaymentStatus {
+  CREATED
+  ATTEMPTED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentPurpose {
+  CONSULT_DEPOSIT
+  CONSULT_FEE
+  OT_ADVANCE
+  OT_SETTLEMENT
+  OTHER
+}
+
+model Payment {
+  id              String         @id @default(cuid())
+  patientId       String?
+  patient         Patient?       @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointmentId   String?
+  appointment     Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  otCaseId        String?
+  otCase          OtCase?        @relation(fields: [otCaseId], references: [id], onDelete: SetNull)
+  purpose         PaymentPurpose @default(CONSULT_DEPOSIT)
+  amountMinor     Int
+  currency        String         @default("INR")
+  status          PaymentStatus  @default(CREATED)
+  razorpayOrderId String?        @unique
+  razorpayPaymentId String?      @unique
+  razorpaySignature String?
+  method          String?
+  failureReason   String?
+  receiptNo       String         @unique
+  refundedMinor   Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// CRM
+// ---------------------------------------------------------------------------
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONSULT_BOOKED
+  SURGERY_ADVISED
+  WON
+  LOST
+}
+
+enum LeadSource {
+  WEBSITE_FORM
+  CHATBOT
+  INSTAGRAM
+  YOUTUBE
+  GOOGLE
+  WALK_IN
+  REFERRAL
+  PHONE
+  CAMPAIGN
+}
+
+model Lead {
+  id        String     @id @default(cuid())
+  name      String
+  phone     String
+  email     String?
+  city      String?
+  stage     LeadStage  @default(NEW)
+  source    LeadSource @default(WEBSITE_FORM)
+  interest  String? // service / procedure they asked about
+  message   String?    @db.Text
+  valueMinor Int       @default(0) // expected revenue
+  ownerId   String?
+  owner     User?      @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  patientId String?
+  patient   Patient?   @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  nextFollowUp DateTime?
+  lostReason String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  activities LeadActivity[]
+
+  @@index([stage])
+  @@index([nextFollowUp])
+  @@index([phone])
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  WHATSAPP
+  EMAIL
+  MEETING
+  STAGE_CHANGE
+  SYSTEM
+}
+
+model LeadActivity {
+  id        String       @id @default(cuid())
+  leadId    String
+  lead      Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type      ActivityType @default(NOTE)
+  body      String       @db.Text
+  createdAt DateTime     @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Social publishing
+// ---------------------------------------------------------------------------
+
+enum SocialPlatform {
+  INSTAGRAM
+  YOUTUBE
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  REEL
+  SHORT
+}
+
+model SocialPost {
+  id          String     @id @default(cuid())
+  title       String
+  caption     String     @db.Text
+  hashtags    String?
+  mediaUrl    String? // publicly reachable URL (Instagram requires this)
+  mediaKind   MediaKind  @default(IMAGE)
+  thumbnailUrl String?
+  status      PostStatus @default(DRAFT)
+  scheduledAt DateTime?
+  authorId    String?
+  author      User?      @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  targets SocialTarget[]
+
+  @@index([status, scheduledAt])
+}
+
+/// One row per (post, platform) so a single click can fan out and each
+/// platform's success/failure is tracked independently.
+model SocialTarget {
+  id            String         @id @default(cuid())
+  postId        String
+  post          SocialPost     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  platform      SocialPlatform
+  status        PostStatus     @default(DRAFT)
+  externalId    String? // IG media id / YouTube video id
+  externalUrl   String?
+  error         String?        @db.Text
+  publishedAt   DateTime?
+
+  @@unique([postId, platform])
+}
+
+model SocialAccount {
+  id           String         @id @default(cuid())
+  platform     SocialPlatform @unique
+  displayName  String
+  externalId   String? // IG business account id / YouTube channel id
+  accessToken  String?        @db.Text
+  refreshToken String?        @db.Text
+  expiresAt    DateTime?
+  connected    Boolean        @default(false)
+  updatedAt    DateTime       @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// AI chatbot
+// ---------------------------------------------------------------------------
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+model Conversation {
+  id         String   @id @default(cuid())
+  sessionKey String   @unique
+  visitorName String?
+  visitorPhone String?
+  leadId     String?
+  handedOff  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           ChatRole
+  content        String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Site content & audit
+// ---------------------------------------------------------------------------
+
+model SiteSetting {
+  key   String @id
+  value String @db.Text
+}
+
+model Testimonial {
+  id        String   @id @default(cuid())
+  author    String
+  body      String   @db.Text
+  rating    Int      @default(5)
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  meta      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
