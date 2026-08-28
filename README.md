@@ -29,6 +29,8 @@ npm run dev
 
 Open http://localhost:3000. The staff console is at `/admin`.
 
+To put it on the internet, see **[DEPLOY.md](DEPLOY.md)**.
+
 Seeded logins (change these before going anywhere near production):
 
 | Role      | Email                   | Password      |
