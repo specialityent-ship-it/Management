@@ -1,8 +1,9 @@
 # Deploying
 
 This is a standard Next.js app with a Postgres database. Anything that can run
-Next.js will host it; the steps below use Vercel plus a managed Postgres
-because that is the least setup.
+Next.js will host it. The steps below are written for Vercel; **Railway works
+the same way** — create a Postgres service, point a service at this repo, set
+the same variables, and give the database a persistent volume.
 
 Budget about an hour for the first deploy, most of it waiting on DNS and
 third-party approvals.
@@ -43,22 +44,29 @@ every page load.
 
 4. Deploy.
 
-## 3. Create the schema and your first login
+## 3. Your first login
 
-From your machine, with `DATABASE_URL` pointing at the production database:
+Nothing to run by hand. On every boot the app applies any pending database
+migrations and then, **only if no user exists yet**, creates the first
+administrator from these variables:
 
-```bash
-npm install
-DATABASE_URL="postgresql://…" npx prisma db push
-DATABASE_URL="postgresql://…" SEED_ADMIN_EMAIL="you@clinic.com" \
-  SEED_ADMIN_PASSWORD="a-strong-password" npm run db:seed
-```
+| Variable              | Notes                                    |
+| --------------------- | ---------------------------------------- |
+| `SEED_ADMIN_EMAIL`    | the address you will sign in with        |
+| `SEED_ADMIN_PASSWORD` | at least 12 characters                   |
+| `SEED_ADMIN_NAME`     | optional display name                    |
 
-The seed creates your admin login plus demo doctors and services. Replace the
-demo content with your own from `/admin` once you can sign in.
+Set them before the first deploy, then sign in at `/login`. The bootstrap is a
+no-op once any user exists, so it cannot create a second admin later and never
+changes an existing password — and it never blocks startup if it fails; check
+the deploy logs for a line beginning `[bootstrap]`.
 
-> Do not skip `SEED_ADMIN_PASSWORD`. Without it the seed uses a well-known
-> default password.
+Change that password after your first sign-in, then remove
+`SEED_ADMIN_PASSWORD` from the environment.
+
+A fresh instance deliberately starts with **no doctors, services or patients** —
+a real clinic should not have to delete demo content first. The demo dataset
+in `prisma/seed.ts` is for local development only (`npm run db:seed`).
 
 ## 4. Point your domain at it
 
@@ -123,6 +131,6 @@ See the README for the details of each integration.
 - [ ] Restrict who has the `ADMIN` role.
 - [ ] Review your obligations on medical records, retention and consent — in
       India, the DPDP Act and the applicable clinical establishment rules.
-- [ ] Replace the demo doctors, services and testimonials with your own.
+- [ ] Add your real doctors, services and consulting hours.
 - [ ] Send yourself a test booking end to end: book, pay, confirm, and check
       the confirmation arrives.
