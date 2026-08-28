@@ -11,6 +11,7 @@ an outpatient department and an operation theatre:
 - **OT management** — theatre scheduling with a surgical safety checklist.
 - **AI chatbot** — a website assistant grounded in your real services and doctors.
 - **Social publishing** — one click to post to Instagram and YouTube, or schedule it.
+- **Notifications** — email and WhatsApp confirmations, receipts and reminders.
 
 Built with Next.js (App Router), TypeScript, Postgres and Prisma.
 
@@ -132,6 +133,56 @@ or `?secret=…`. Point a scheduler at it every few minutes:
 
 On Vercel, add it to `vercel.json` as a cron job instead.
 
+### Notifications (email & WhatsApp)
+
+Patients are messaged on the events that matter to them: booking received,
+booking confirmed, booking cancelled, payment receipt, a reminder the day
+before, and a procedure being scheduled. Check-in and completion are internal
+state and are deliberately not messaged.
+
+Two rules shape the design:
+
+- **Delivery never breaks the clinic.** Sending is best-effort and never
+  throws. A booking completes even if the mail server is refusing
+  connections — the failure is recorded, not raised. This is verified: with
+  SMTP down, bookings still return 201 and the attempt is logged `FAILED`.
+- **Nothing is sent twice.** Every attempt is written to `NotificationLog`,
+  which doubles as the de-duplication key. The reminder job is safe to run as
+  often as you like, and the Razorpay browser callback racing its own webhook
+  produces one receipt, not two.
+
+`SENT` and `SKIPPED` both count as settled, so a patient with no email on file
+produces one log row, not one per cron tick. `FAILED` is deliberately
+retryable — when a mail outage ends, the next run delivers.
+
+`/admin/notifications` shows every attempt, so staff can see who was not
+reachable and phone them instead.
+
+**Email** is plain SMTP, so it works with Google Workspace, Amazon SES, Zoho,
+Postmark or anything else without a code change. Set `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD` and `SMTP_FROM`.
+
+**WhatsApp** uses the Meta WhatsApp Cloud API. Set `WHATSAPP_ACCESS_TOKEN`
+and `WHATSAPP_PHONE_NUMBER_ID`. Note that Meta requires business-initiated
+messages to use a **template approved in WhatsApp Manager** — you cannot send
+free-form text to a patient who has not messaged you in the last 24 hours. So:
+
+1. Create one template per message in WhatsApp Manager and get it approved.
+2. Give each a body with numbered placeholders (`{{1}}`, `{{2}}`, …) in the
+   order listed in `whatsappParams` in `src/lib/notifications/templates.ts`.
+3. Either name them exactly as the template keys (`booking_confirmed` and so
+   on), or map your approved names with the `WHATSAPP_TEMPLATE_*` overrides.
+
+Ten-digit numbers are assumed to be `WHATSAPP_DEFAULT_COUNTRY_CODE` (91).
+
+Reminders run from their own cron route, protected by the same `CRON_SECRET`:
+
+```
+0 * * * * curl -s -H "Authorization: Bearer $CRON_SECRET" https://your-domain/api/cron/reminders
+```
+
+`REMINDER_HOURS_AHEAD` (default 24) controls how far ahead it looks.
+
 ### Operation theatre
 
 Each case carries a trimmed WHO surgical safety checklist, seeded
@@ -154,6 +205,7 @@ src/lib/scheduling.ts     Slot generation and conflict detection
 src/lib/razorpay.ts       Order creation and signature verification
 src/lib/chatbot.ts        Grounded assistant
 src/lib/social/           Instagram, YouTube and the fan-out publisher
+src/lib/notifications/    Email, WhatsApp, templates and the dispatcher
 ```
 
 ## Commands
@@ -183,6 +235,6 @@ optional:
 - Review your local rules on medical records, retention and consent
   (in India, the DPDP Act and the applicable clinical establishment rules)
   before storing real patient data.
-- Add transactional email or WhatsApp for booking confirmations — the schema
-  and status transitions are ready for it, but no messaging provider is wired
-  in yet.
+- Configure at least one notification channel (SMTP or WhatsApp) so patients
+  actually receive confirmations and reminders, and schedule the reminder
+  cron. Until then the app records every message as skipped.

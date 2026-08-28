@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AppointmentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { verifyWebhookSignature } from "@/lib/razorpay";
+import { notifyAppointment } from "@/lib/notifications";
 
 /// Razorpay's server-to-server notification. This is the authoritative record
 /// of a payment — the browser callback can be lost if the patient closes the
@@ -37,9 +38,27 @@ export async function POST(request: NextRequest) {
           data: { status: "PAID", razorpayPaymentId: entity.id, method: entity.method ?? null },
         });
         if (payment.appointmentId) {
-          await prisma.appointment.updateMany({
+          const confirmed = await prisma.appointment.updateMany({
             where: { id: payment.appointmentId, status: AppointmentStatus.PENDING_PAYMENT },
             data: { status: AppointmentStatus.CONFIRMED },
+          });
+
+          // `once` keeps this from double-messaging when the browser callback
+          // already handled the same payment.
+          if (confirmed.count > 0) {
+            await notifyAppointment({
+              template: "booking_confirmed",
+              appointmentId: payment.appointmentId,
+              once: true,
+            });
+          }
+          await notifyAppointment({
+            template: "payment_receipt",
+            appointmentId: payment.appointmentId,
+            entity: "Payment",
+            entityId: payment.id,
+            once: true,
+            extra: { amountMinor: payment.amountMinor, receiptNo: payment.receiptNo },
           });
         }
         break;

@@ -5,6 +5,7 @@ import { ok, handleError, ApiError } from "@/lib/api";
 import { bookingRequestSchema } from "@/lib/validation";
 import { assertSlotFree } from "@/lib/scheduling";
 import { appointmentReference, nextMrn } from "@/lib/ids";
+import { notifyAppointment } from "@/lib/notifications";
 
 export async function POST(request: NextRequest) {
   try {
@@ -90,6 +91,15 @@ export async function POST(request: NextRequest) {
         patientId: appointment.patientId,
       },
     });
+
+    // Deposit-first bookings are acknowledged once the payment lands, so we
+    // do not tell a patient "request received" and then ask them to pay.
+    if (!needsDeposit) {
+      await notifyAppointment({
+        template: "booking_received",
+        appointmentId: appointment.id,
+      });
+    }
 
     return ok(
       {

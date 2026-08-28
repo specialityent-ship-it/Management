@@ -4,6 +4,7 @@ import { AppointmentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { ok, handleError, ApiError } from "@/lib/api";
 import { verifyCheckoutSignature } from "@/lib/razorpay";
+import { notifyAppointment } from "@/lib/notifications";
 
 const schema = z.object({
   razorpay_order_id: z.string().min(1),
@@ -42,6 +43,22 @@ export async function POST(request: NextRequest) {
       await prisma.appointment.update({
         where: { id: payment.appointmentId },
         data: { status: AppointmentStatus.CONFIRMED },
+      });
+      await notifyAppointment({
+        template: "booking_confirmed",
+        appointmentId: payment.appointmentId,
+        once: true,
+      });
+    }
+
+    if (payment.appointmentId) {
+      await notifyAppointment({
+        template: "payment_receipt",
+        appointmentId: payment.appointmentId,
+        entity: "Payment",
+        entityId: payment.id,
+        once: true,
+        extra: { amountMinor: updated.amountMinor, receiptNo: updated.receiptNo },
       });
     }
 

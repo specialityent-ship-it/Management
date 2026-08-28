@@ -23,6 +23,16 @@ const CHECKS = [
     name: "YouTube publishing",
     hint: "YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN",
   },
+  {
+    key: "email" as const,
+    name: "Email notifications",
+    hint: "SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD",
+  },
+  {
+    key: "whatsapp" as const,
+    name: "WhatsApp notifications",
+    hint: "WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID",
+  },
 ];
 
 export default async function SettingsPage() {

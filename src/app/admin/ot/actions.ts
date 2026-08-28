@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/auth";
 import { otCaseSchema } from "@/lib/validation";
 import { assertSlotFree, assertTheatreFree } from "@/lib/scheduling";
 import { otReference } from "@/lib/ids";
+import { notify } from "@/lib/notifications";
 
 /// WHO surgical safety checklist, trimmed to the items a day-case theatre
 /// actually signs off. Seeded on every new case so nothing is forgotten.
@@ -43,7 +44,7 @@ export async function createOtCase(formData: FormData) {
   const scheduledStart = new Date(input.scheduledStart);
   const scheduledEnd = new Date(scheduledStart.getTime() + input.durationMin * 60 * 1000);
 
-  await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     await assertSlotFree({
       doctorId: input.surgeonId,
       start: scheduledStart,
@@ -87,7 +88,33 @@ export async function createOtCase(formData: FormData) {
         entityId: otCase.id,
       },
     });
+
+    return otCase;
   });
+
+  // Sent after the transaction commits — a slow mail server should never hold
+  // a database transaction open, and a bounce must not undo the booking.
+  const detail = await prisma.otCase.findUnique({
+    where: { id: created.id },
+    include: { patient: true, surgeon: true, service: true, theatre: true },
+  });
+
+  if (detail) {
+    await notify({
+      template: "ot_scheduled",
+      to: { email: detail.patient.email, phone: detail.patient.phone },
+      entity: "OtCase",
+      entityId: detail.id,
+      context: {
+        patientName: detail.patient.name,
+        reference: detail.reference,
+        serviceName: detail.service.name,
+        doctorName: detail.surgeon.name,
+        start: detail.scheduledStart,
+        theatreName: detail.theatre?.name ?? null,
+      },
+    });
+  }
 
   revalidatePath("/admin/ot");
 }

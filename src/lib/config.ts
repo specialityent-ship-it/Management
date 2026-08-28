@@ -22,4 +22,8 @@ export const integrations = {
       process.env.YOUTUBE_CLIENT_SECRET &&
       process.env.YOUTUBE_REFRESH_TOKEN,
   ),
+  email: Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT),
+  whatsapp: Boolean(
+    process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID,
+  ),
 };

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { AppointmentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
+import { notifyAppointment } from "@/lib/notifications";
 
 export async function updateAppointmentStatus(formData: FormData) {
   const session = await requireSession();
@@ -32,6 +33,14 @@ export async function updateAppointmentStatus(formData: FormData) {
       meta: reason || null,
     },
   });
+
+  // Only the two transitions the patient needs to hear about. Check-in and
+  // completion are internal state, and messaging them would be noise.
+  if (status === AppointmentStatus.CONFIRMED) {
+    await notifyAppointment({ template: "booking_confirmed", appointmentId: id });
+  } else if (status === AppointmentStatus.CANCELLED) {
+    await notifyAppointment({ template: "booking_cancelled", appointmentId: id });
+  }
 
   revalidatePath("/admin/appointments");
   revalidatePath("/admin");

@@ -506,6 +506,40 @@ model ChatMessage {
 // Site content & audit
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Outbound messaging
+// ---------------------------------------------------------------------------
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  SKIPPED // no address/number on file, or the channel is not configured
+}
+
+/// One row per delivery attempt. Doubles as the de-duplication key for
+/// reminders, so a cron re-run never messages the same patient twice.
+model NotificationLog {
+  id        String              @id @default(cuid())
+  channel   NotificationChannel
+  template  String
+  recipient String
+  subject   String?
+  body      String              @db.Text
+  status    NotificationStatus
+  error     String?             @db.Text
+  entity    String? // "Appointment" | "OtCase" | "Payment"
+  entityId  String?
+  createdAt DateTime            @default(now())
+
+  @@index([entity, entityId, template, status])
+  @@index([createdAt])
+}
+
 model SiteSetting {
   key   String @id
   value String @db.Text
