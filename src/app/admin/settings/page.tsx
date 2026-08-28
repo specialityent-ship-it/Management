@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { clinic, integrations } from "@/lib/config";
@@ -130,7 +131,7 @@ export default async function SettingsPage() {
           ))}
         </ul>
         <p className="border-t border-ink-200 px-5 py-3 text-xs text-ink-500">
-          Add staff accounts with <code>npm run db:seed</code> or directly in Prisma Studio.
+          Manage these from <Link href="/admin/staff" className="font-medium text-brand-700 hover:underline">Staff accounts</Link>.
         </p>
       </section>
     </div>

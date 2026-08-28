@@ -10,6 +10,9 @@ import {
   Megaphone,
   MessagesSquare,
   BellRing,
+  Stethoscope,
+  ClipboardList,
+  UserCog,
   Settings,
 } from "lucide-react";
 import { getSession } from "@/lib/auth";
@@ -28,6 +31,9 @@ const NAV = [
   { href: "/admin/social", label: "Social", icon: Megaphone },
   { href: "/admin/conversations", label: "Chatbot", icon: MessagesSquare },
   { href: "/admin/notifications", label: "Notifications", icon: BellRing },
+  { href: "/admin/doctors", label: "Doctors", icon: Stethoscope },
+  { href: "/admin/services", label: "Services", icon: ClipboardList },
+  { href: "/admin/staff", label: "Staff", icon: UserCog },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
